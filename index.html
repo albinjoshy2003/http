@@ -1,1 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CrowNav | The Avian Migration Package</title>
 
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet Map CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Google Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --theme-color: #3b82f6; /* Default Blue */
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Google Sans', sans-serif;
+            overflow: hidden;
+            background-color: #f8f9fa;
+        }
+
+        /* --- Layout --- */
+        #sidebar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 400px;
+            height: 100vh;
+            background: #ffffff;
+            z-index: 9999; /* Above map */
+            box-shadow: 2px 0 15px rgba(0,0,0,0.15);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s ease;
+        }
+
+        #map-container {
+            position: absolute;
+            top: 0;
+            left: 400px;
+            width: calc(100vw - 400px);
+            height: 100vh;
+            z-index: 1; /* Below sidebar */
+            background: #e5e7eb; /* Fallback color */
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Responsive: Mobile Bottom Sheet */
+        @media (max-width: 768px) {
+            #sidebar {
+                width: 100%;
+                height: 50vh;
+                top: auto;
+                bottom: 0;
+                border-top-left-radius: 24px;
+                border-top-right-radius: 24px;
+                box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+            }
+            #map-container {
+                left: 0;
+                width: 100vw;
+                height: 50vh;
+            }
+            .leaflet-control-zoom {
+                display: none; /* Hide zoom on mobile for cleaner look */
+            }
+        }
+
+        /* --- Custom Map Styles --- */
+        /* High contrast glowing path for dark satellite tiles */
+        .animated-path {
+            stroke: #0ea5e9;
+            stroke-width: 6;
+            stroke-linecap: round;
+            filter: drop-shadow(0 0 8px rgba(14, 165, 233, 0.8)) drop-shadow(0 0 12px #fff);
+            /* Animation handled in JS via inline dasharray */
+        }
+
+        /* Vibrant Hummingbird Animation */
+        .vibrate-text {
+            animation: vibrate 0.1s linear infinite;
+            color: #ef4444;
+            font-weight: bold;
+        }
+        @keyframes vibrate {
+            0% { transform: translate(0, 0); }
+            25% { transform: translate(-2px, 1px); }
+            50% { transform: translate(1px, -1px); }
+            75% { transform: translate(-1px, 2px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        /* Custom Markers with white outlines */
+        .custom-marker {
+            font-size: 28px;
+            filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.6));
+            background: white;
+            border-radius: 50%;
+            width: 40px !important;
+            height: 40px !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 3px solid var(--theme-color);
+            margin-left: -20px;
+            margin-top: -20px;
+        }
+
+        /* --- Massive Google Maps POI Popup --- */
+        .google-maps-popup .leaflet-popup-content-wrapper {
+            padding: 0;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            background: #fff;
+        }
+        .google-maps-popup .leaflet-popup-content {
+            margin: 0;
+            width: 320px !important;
+            font-family: 'Google Sans', sans-serif;
+        }
+        .google-maps-popup .leaflet-popup-tip-container {
+            margin-top: -1px;
+        }
+        
+        .poi-hero {
+            height: 160px;
+            width: 100%;
+            background-size: cover;
+            background-position: center;
+            position: relative;
+        }
+        .poi-content {
+            padding: 16px;
+        }
+        .poi-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #1f2937;
+            margin: 0 0 4px 0;
+        }
+        .poi-rating {
+            font-size: 0.875rem;
+            color: #4b5563;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .poi-rating span { color: #fbbf24; }
+        
+        /* Action Row */
+        .poi-actions {
+            display: flex;
+            justify-content: space-around;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 16px;
+            margin-bottom: 16px;
+        }
+        .poi-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            color: var(--theme-color);
+            font-weight: 500;
+            background: none;
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .poi-btn:hover { opacity: 0.7; }
+        .poi-btn .circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(59, 130, 246, 0.1); /* fallback */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--theme-color);
+        }
+
+        /* Details List */
+        .poi-details {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .poi-detail-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 0.875rem;
+            color: #374151;
+        }
+        .poi-detail-item .material-icons {
+            font-size: 20px;
+            color: var(--theme-color);
+        }
+
+        /* Avian Alerts Marquee */
+        #avian-alerts {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.75);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            white-space: nowrap;
+            z-index: 999;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            pointer-events: none;
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
+<body>
+
+    <aside id="sidebar">
+        <!-- Header -->
+        <div class="p-6 bg-white border-b border-gray-100 shrink-0 relative overflow-hidden">
+            <!-- Nest Pattern Decoration -->
+            <div class="absolute -top-10 -right-10 opacity-10 text-9xl pointer-events-none">🪹</div>
+            
+            <h1 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                <span class="text-3xl">🦅</span> CrowNav
+            </h1>
+            <p class="text-sm text-gray-500 mt-1">Premium Migration & Routing</p>
+        </div>
+
+        <!-- Scrollable Content -->
+        <div class="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+            
+            <!-- Inputs -->
+            <div class="flex flex-col gap-4 relative">
+                <div class="absolute left-4 top-5 bottom-5 w-0.5 bg-gray-200 z-0"></div>
+                
+                <div class="relative z-10 flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center border-2 border-white shadow-sm shrink-0">
+                        <span class="material-icons text-sm">my_location</span>
+                    </div>
+                    <input type="text" id="origin-input" placeholder="Origin (e.g., Kerala)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow shadow-sm">
+                </div>
+                
+                <div class="relative z-10 flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center border-2 border-white shadow-sm shrink-0">
+                        <span class="material-icons text-sm">place</span>
+                    </div>
+                    <input type="text" id="dest-input" placeholder="Destination (e.g., Tamil Nadu)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow shadow-sm">
+                </div>
+            </div>
+
+            <!-- Bird Profile Selection -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Select Flight Profile</label>
+                <div class="relative">
+                    <select id="bird-select" class="w-full appearance-none bg-white border border-gray-300 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm font-medium text-gray-700">
+                        <option value="crow">🐦 Standard Crow (Reliable)</option>
+                        <option value="hummingbird">🚀 Caffeinated Hummingbird (Fast/High Flap)</option>
+                        <option value="albatross">🦅 Lazy Albatross (Glider)</option>
+                        <option value="pigeon">🕊️ Distracted Pigeon (Adds +15% Detours)</option>
+                        <option value="penguin">🐧 Delusional Penguin (Flightless)</option>
+                    </select>
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+                        <span class="material-icons">expand_more</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Button -->
+            <button id="fly-btn" class="w-full text-white font-bold rounded-xl py-4 flex items-center justify-center gap-2 shadow-lg transition-all hover:-translate-y-1 hover:shadow-xl" style="background-color: var(--theme-color);">
+                <span class="material-icons">flight_takeoff</span> Plan Migration
+            </button>
+            
+            <!-- Error Toast -->
+            <div id="error-msg" class="hidden p-4 rounded-lg bg-red-50 text-red-600 text-sm border border-red-100 shadow-sm flex items-start gap-2">
+                <span class="material-icons text-base">error_outline</span>
+                <span id="error-text"></span>
+            </div>
+
+            <!-- Itinerary Results (Hidden until calculated) -->
+            <div id="results-panel" class="hidden flex-col gap-4 mt-2">
+                <h3 class="font-bold text-gray-800 border-b pb-2">Flight Itinerary</h3>
+                
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 shadow-sm">
+                        <div class="text-xs text-gray-500 flex items-center gap-1 mb-1"><span class="material-icons text-sm" style="color: var(--theme-color)">straighten</span> Distance</div>
+                        <div id="res-dist" class="font-bold text-lg text-gray-800">--</div>
+                    </div>
+                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 shadow-sm">
+                        <div class="text-xs text-gray-500 flex items-center gap-1 mb-1"><span class="material-icons text-sm" style="color: var(--theme-color)">explore</span> Bearing</div>
+                        <div id="res-bear" class="font-bold text-lg text-gray-800">--</div>
+                    </div>
+                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 shadow-sm">
+                        <div class="text-xs text-gray-500 flex items-center gap-1 mb-1"><span class="material-icons text-sm" style="color: var(--theme-color)">schedule</span> Bird-Hours</div>
+                        <div id="res-time" class="font-bold text-lg text-gray-800">--</div>
+                    </div>
+                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 shadow-sm">
+                        <div class="text-xs text-gray-500 flex items-center gap-1 mb-1"><span class="material-icons text-sm" style="color: var(--theme-color)">waves</span> Flap Cost</div>
+                        <div id="res-flap" class="font-bold text-lg text-gray-800">--</div>
+                    </div>
+                </div>
+
+                <!-- Turn by Turn -->
+                <div class="mt-2 text-sm text-gray-600 space-y-3">
+                    <div class="flex gap-3">
+                        <span class="material-icons text-green-500">flight_takeoff</span>
+                        <span>Take off. Orient immediately to <strong id="step-bearing">--</strong>.</span>
+                    </div>
+                    <div class="flex gap-3">
+                        <span class="material-icons text-blue-500">fast_forward</span>
+                        <span>Maintain Euclidean vector. Ignore human property laws and geographical obstructions.</span>
+                    </div>
+                    <div class="flex gap-3">
+                        <span class="material-icons text-red-500">flight_land</span>
+                        <span>Land abruptly at destination. Demand seeds.</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Padding for bottom scroll -->
+            <div class="h-8"></div>
+        </div>
+    </aside>
+
+    <div id="map-container">
+        <div id="map"></div>
+        
+        <!-- Avian Alerts Ticker -->
+        <div id="avian-alerts">
+            <span class="material-icons text-yellow-400 text-sm">campaign</span>
+            <span id="alert-text">Avian Alerts initializing...</span>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Map Initialization (MapTiler Satellite) ---
+        // We set zoomControl to false here, and add it manually to bottom-right
+        const map = L.map('map', { zoomControl: false }).setView([10.35, 76.28], 7);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // MapTiler Hybrid (Satellite + Labels) URL
+        // Used provided specific key.
+        L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.jpg?key=o0ftAF1YQf6dja6WzNUE', {
+            maxZoom: 20,
+            attribution: '&copy; <a href="https://www.maptiler.com/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        // --- 2. State & Config ---
+        let currentLayers = []; // Track markers, lines to clear them
+        
+        const birdProfiles = {
+            crow: { name: 'Common Crow', speed: 45, flapRate: 3, theme: '#3b82f6', icon: '🐦' },
+            hummingbird: { name: 'Hummingbird', speed: 90, flapRate: 80, theme: '#10b981', icon: '🚀' }, // Green
+            albatross: { name: 'Albatross', speed: 80, flapRate: 0.1, theme: '#0ea5e9', icon: '🦅' }, // Light Blue
+            pigeon: { name: 'Pigeon', speed: 60, flapRate: 5, theme: '#8b5cf6', icon: '🕊️', detour: 1.15 }, // Purple
+            penguin: { name: 'Penguin', speed: 0, flapRate: 0, theme: '#1f2937', icon: '🐧', error: true } // Dark gray
+        };
+
+        const funnyAlerts = [
+            "Worm Buffet reported in the park. Stop recommended!",
+            "Traffic jam on I-10: Highly entertaining confusion!",
+            "Caution: Potential Eagle nesting grounds ahead. Hold your ground!",
+            "Wind current advisory: Look for the blue feather icon for a boost!",
+            "Local statues freshly cleaned. Target practice available.",
+            "Reports of dropped french fries at coordinates ahead."
+        ];
+
+        // --- 3. DOM Elements ---
+        const btnFly = document.getElementById('fly-btn');
+        const inOrigin = document.getElementById('origin-input');
+        const inDest = document.getElementById('dest-input');
+        const selectBird = document.getElementById('bird-select');
+        const panelResults = document.getElementById('results-panel');
+        const errorMsg = document.getElementById('error-msg');
+        const errorText = document.getElementById('error-text');
+        const alertText = document.getElementById('alert-text');
+
+        // --- STREAMING_CHUNK:Helper Math Functions ---
+        
+        // Haversine formula (km)
+        function calcDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        // Bearing formula
+        function calcBearing(lat1, lon1, lat2, lon2) {
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            lat1 = lat1 * Math.PI / 180;
+            lat2 = lat2 * Math.PI / 180;
+            const y = Math.sin(dLon) * Math.cos(lat2);
+            const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+            let brng = Math.atan2(y, x) * 180 / Math.PI;
+            return (brng + 360) % 360;
+        }
+
+        function getCompassDir(bearing) {
+            const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"];
+            return dirs[Math.round(bearing / 45)];
+        }
+
+        // Geocoding function using Nominatim
+        async function getCoords(query) {
+            // Added email param as per OSM policy requirements
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&email=crownav_test_app@example.com`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("API Network Error");
+            const data = await response.json();
+            if (data.length === 0) throw new Error(`Could not locate: ${query}`);
+            return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+        }
+
+        function showError(msg) {
+            errorText.innerText = msg;
+            errorMsg.classList.remove('hidden');
+            panelResults.classList.add('hidden');
+        }
+        function hideError() {
+            errorMsg.classList.add('hidden');
+        }
+
+        // --- STREAMING_CHUNK:Theme & Alert Management ---
+        
+        // Theme Shifting
+        selectBird.addEventListener('change', (e) => {
+            const profile = birdProfiles[e.target.value];
+            document.documentElement.style.setProperty('--theme-color', profile.theme);
+        });
+
+        // Avian Alerts Ticker
+        setInterval(() => {
+            const randomAlert = funnyAlerts[Math.floor(Math.random() * funnyAlerts.length)];
+            alertText.style.opacity = 0;
+            setTimeout(() => {
+                alertText.innerText = randomAlert;
+                alertText.style.opacity = 1;
+                alertText.style.transition = "opacity 0.5s";
+            }, 500);
+        }, 6000);
+
+        // --- STREAMING_CHUNK:Generating Rich POIs ---
+        
+        function generatePOI(lat, lng, type, profile) {
+            let title, icon, color, actionBtn, actionTxt, detailAddress, imgQuery, quotes;
+            
+            if (type === 'food') {
+                title = profile.name === 'Pigeon' ? "High-Yield Discarded Fry Zone" : "All-You-Can-Eat Crumb Buffet";
+                icon = 'restaurant'; color = '#f97316'; actionBtn = 'restaurant_menu'; actionTxt = 'Dive Bomb';
+                detailAddress = "Behind the main dumpster, 3rd alleyway"; imgQuery = "crumbs,food";
+                quotes = [
+                    "Fresh sourdough spotted. Prepare for aggressive seagull competition.",
+                    "Caution: Fries are soggy. Proceed to next drive-thru."
+                ];
+            } else if (type === 'hotel') {
+                title = profile.name === 'Pigeon' ? "Luxury Concrete Ledge & HVAC Unit" : "5-Star Oak Canopy Resort";
+                icon = 'hotel'; color = '#8b5cf6'; actionBtn = 'bookmark'; actionTxt = 'Save Nest';
+                detailAddress = "High branches, excellent wind shielding"; imgQuery = "forest,tree";
+                quotes = [
+                    "Five-star oak canopy. Beware of noisy squirrel neighbors.",
+                    "HVAC unit hums nicely. Warm in winter. 4/5."
+                ];
+            } else { // water
+                title = "Premium Puddle Spa & Hydration";
+                icon = 'water_drop'; color = '#0ea5e9'; actionBtn = 'local_drink'; actionTxt = 'Drink';
+                detailAddress = "Edge of the municipal fountain"; imgQuery = "lake,water";
+                quotes = [
+                    "Looks deep. Watch out for snapping turtles.",
+                    "Premium puddle. Highly rated by local ducks."
+                ];
+            }
+
+            // Select random quote
+            const quote = quotes[Math.floor(Math.random() * quotes.length)];
+            // Fake Rating
+            const rating = (4 + Math.random()).toFixed(1);
+            const reviews = Math.floor(Math.random() * 500) + 10;
+            
+            // Unsplash Source for placeholder image (using unique coords seed to keep it static per stop)
+            const imgUrl = `https://loremflickr.com/400/200/${imgQuery}?lock=${Math.floor(lat*1000)}`;
+
+            // Google Maps POI HTML Template
+            const popupHTML = `
+                <div class="poi-hero" style="background-image: url('${imgUrl}');"></div>
+                <div class="poi-content">
+                    <h3 class="poi-title">${title}</h3>
+                    <div class="poi-rating">${rating} <span>★★★★★</span> (${reviews} Flock Reviews)</div>
+                    
+                    <div class="poi-actions">
+                        <button class="poi-btn">
+                            <div class="circle" style="background: ${color}22; color: ${color};"><span class="material-icons">${actionBtn}</span></div>
+                            ${actionTxt}
+                        </button>
+                        <button class="poi-btn">
+                            <div class="circle" style="background: ${color}22; color: ${color};"><span class="material-icons">share</span></div>
+                            Squawk
+                        </button>
+                        <button class="poi-btn">
+                            <div class="circle" style="background: #f3f4f6; color: #6b7280;"><span class="material-icons">block</span></div>
+                            Ignore
+                        </button>
+                    </div>
+
+                    <div class="poi-details">
+                        <div class="poi-detail-item">
+                            <span class="material-icons" style="color:${color}">place</span>
+                            <span>${detailAddress}</span>
+                        </div>
+                        <div class="poi-detail-item">
+                            <span class="material-icons" style="color:${color}">schedule</span>
+                            <span>Opens at Dawn • High competition by 8:00 AM</span>
+                        </div>
+                        <div class="poi-detail-item">
+                            <span class="material-icons" style="color:${color}">format_quote</span>
+                            <span class="italic text-gray-500">"${quote}"</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Create custom HTML marker for the map pin
+            const markerHtml = `<div class="custom-marker" style="border-color:${color}; color:${color}; font-size:18px;">
+                                    <span class="material-icons">${icon}</span>
+                                </div>`;
+            const customIcon = L.divIcon({ html: markerHtml, className: '' });
+
+            const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+            
+            // Bind Massive Google Maps Style Popup
+            marker.bindPopup(popupHTML, { 
+                className: 'google-maps-popup',
+                minWidth: 320,
+                maxWidth: 320,
+                autoPanPadding: [50, 50] // Ensure popup fits on screen
+            });
+
+            // Smooth pan on click
+            marker.on('click', function() {
+                map.panTo([lat, lng], { animate: true, duration: 0.5 });
+            });
+
+            currentLayers.push(marker);
+        }
+
+
+        // --- STREAMING_CHUNK:Main Flight Logic Execution ---
+        
+        btnFly.addEventListener('click', async () => {
+            hideError();
+            const valOrigin = inOrigin.value.trim();
+            const valDest = inDest.value.trim();
+            const profileKey = selectBird.value;
+            const profile = birdProfiles[profileKey];
+
+            if (!valOrigin || !valDest) {
+                return showError("Please provide both Origin and Destination.");
+            }
+
+            // Penguin Error Trigger
+            if (profile.error) {
+                return showError("Route Failed: Subject structurally unsuited for airborne Euclidean vectors. Initiating belly-slide protocols.");
+            }
+
+            // UI Loading state
+            const origBtnText = btnFly.innerHTML;
+            btnFly.innerHTML = `<span class="material-icons animate-spin">autorenew</span> Calculating...`;
+            btnFly.disabled = true;
+
+            try {
+                // Clear old map layers
+                currentLayers.forEach(layer => map.removeLayer(layer));
+                currentLayers = [];
+
+                // 1. Geocode
+                const coordOrigin = await getCoords(valOrigin);
+                const coordDest = await getCoords(valDest);
+
+                // 2. Math
+                let dist = calcDistance(coordOrigin[0], coordOrigin[1], coordDest[0], coordDest[1]);
+                if (profile.detour) dist = dist * profile.detour; // Pigeon penalty
+                
+                const bearing = calcBearing(coordOrigin[0], coordOrigin[1], coordDest[0], coordDest[1]);
+                const compass = getCompassDir(bearing);
+                
+                // Flight stats
+                const hours = dist / profile.speed;
+                // Flaps = distance (km) / speed (km/h) = hours * 3600 (seconds) * flaps per second
+                let flaps = hours * 3600 * profile.flapRate;
+
+                // 3. UI Updates
+                document.getElementById('res-dist').innerText = `${dist.toFixed(1)} km`;
+                document.getElementById('res-bear').innerText = `${bearing.toFixed(0)}° ${compass}`;
+                document.getElementById('step-bearing').innerText = `${bearing.toFixed(0)}°`;
+                
+                // Format Bird-Hours beautifully
+                if (hours < 1) {
+                    document.getElementById('res-time').innerText = `${(hours*60).toFixed(0)} mins`;
+                } else {
+                    document.getElementById('res-time').innerText = `${hours.toFixed(1)} hrs`;
+                }
+
+                // Format Flap Cost (Add hummingbird vibration class)
+                const elFlap = document.getElementById('res-flap');
+                elFlap.innerText = new Intl.NumberFormat().format(Math.round(flaps));
+                if (profileKey === 'hummingbird') {
+                    elFlap.classList.add('vibrate-text');
+                } else {
+                    elFlap.classList.remove('vibrate-text');
+                }
+
+                panelResults.classList.remove('hidden');
+
+                // 4. Map Drawing & Animation
+                
+                // Custom Origin / Dest Markers
+                const mkIcon = (emoji) => L.divIcon({ html: `<div class="custom-marker">${emoji}</div>`, className: '' });
+                const mOrigin = L.marker(coordOrigin, { icon: mkIcon('🎯') }).addTo(map);
+                const mDest = L.marker(coordDest, { icon: mkIcon('🪱') }).addTo(map);
+                currentLayers.push(mOrigin, mDest);
+
+                // Swoop Camera
+                map.flyToBounds([coordOrigin, coordDest], { padding: [80, 80], duration: 1.5 });
+
+                // Wait for camera to settle before drawing line
+                setTimeout(() => {
+                    // Draw Line
+                    const line = L.polyline([coordOrigin, coordDest], {
+                        className: 'animated-path',
+                        dashArray: '10, 15', // Make it dashed
+                    }).addTo(map);
+                    
+                    // Hacky CSS animation application for SVG path
+                    const pathElem = line._path;
+                    if(pathElem) {
+                        const length = pathElem.getTotalLength();
+                        pathElem.style.strokeDasharray = `${length} ${length}`;
+                        pathElem.style.strokeDashoffset = length;
+                        pathElem.getBoundingClientRect(); // trigger layout
+                        pathElem.style.transition = 'stroke-dashoffset 4s ease-in-out';
+                        pathElem.style.strokeDashoffset = '0';
+                    }
+                    currentLayers.push(line);
+
+                    // Calculate interpolation points for POIs
+                    const dLat = coordDest[0] - coordOrigin[0];
+                    const dLng = coordDest[1] - coordOrigin[1];
+                    
+                    // Add POIs at 25%, 50%, 75% marks along the path
+                    setTimeout(() => {
+                        generatePOI(coordOrigin[0] + dLat * 0.25, coordOrigin[1] + dLng * 0.25, 'food', profile);
+                        generatePOI(coordOrigin[0] + dLat * 0.50, coordOrigin[1] + dLng * 0.50, 'hotel', profile);
+                        generatePOI(coordOrigin[0] + dLat * 0.75, coordOrigin[1] + dLng * 0.75, 'water', profile);
+                    }, 4000); // Generate them right as the line finishes drawing
+
+                }, 1500);
+
+            } catch (err) {
+                showError(err.message);
+            } finally {
+                btnFly.innerHTML = `<span class="material-icons">flight_takeoff</span> Plan Migration`;
+                btnFly.disabled = false;
+            }
+        });
+
+    </script>
+</body>
+</html>
